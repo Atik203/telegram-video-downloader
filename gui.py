@@ -400,6 +400,11 @@ class DownloadWorker(QThread):
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(self._execute())
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            logger.info("DownloadWorker task cleanly cancelled.")
+        except Exception as e:
+            logger.error(f"Worker unhandled error: {e}", exc_info=True)
+            self.sig_error.emit(str(e))
         finally:
             loop.close()
 
@@ -477,11 +482,13 @@ class DownloadWorker(QThread):
             item_indices = {id(item): idx for idx, item in enumerate(video_items)}
             last_progress_time: Dict[int, float] = {}
             last_bytes: Dict[int, int] = {}
+            smoothed_speeds: Dict[int, float] = {}
 
             def make_callback(v_info: VideoInfo):
                 row_idx = item_indices[id(v_info)]
                 last_progress_time[row_idx] = time.time()
                 last_bytes[row_idx] = 0
+                smoothed_speeds[row_idx] = 0.0
 
                 def cb(downloaded: int, total: int):
                     if self.is_cancelled:
@@ -489,15 +496,25 @@ class DownloadWorker(QThread):
 
                     now = time.time()
                     dt = now - last_progress_time.get(row_idx, now)
-                    # Throttle UI signal to 5-10 Hz to keep GUI silky smooth
-                    if dt >= 0.15 or downloaded == total:
+                    # Throttle UI signal to ~5-8 Hz to keep GUI silky smooth and prevent jitter
+                    if dt >= 0.18 or downloaded == total:
                         db = downloaded - last_bytes.get(row_idx, 0)
-                        speed_mb = (db / dt) / (1024 * 1024) if dt > 0 else 0
-                        speed_str = f"{speed_mb:.1f} MB/s" if speed_mb > 0 else "-- MB/s"
+                        instant_mb = (db / dt) / (1024 * 1024) if dt > 0 else 0
+
+                        # Apply Exponential Moving Average (EMA) smoothing:
+                        # alpha = 0.25 yields ~1.2s averaging window, smoothing out discrete MTProto packet arrival bursts
+                        curr_smooth = smoothed_speeds.get(row_idx, 0.0)
+                        if curr_smooth <= 0.05:
+                            smooth_mb = instant_mb
+                        else:
+                            smooth_mb = 0.25 * instant_mb + 0.75 * curr_smooth
+                        smoothed_speeds[row_idx] = smooth_mb
+
+                        speed_str = f"{smooth_mb:.1f} MB/s" if smooth_mb > 0.1 else "-- MB/s"
 
                         remaining_bytes = total - downloaded
-                        if speed_mb > 0.05 and remaining_bytes > 0:
-                            eta_secs = int(remaining_bytes / (speed_mb * 1024 * 1024))
+                        if smooth_mb > 0.05 and remaining_bytes > 0:
+                            eta_secs = int(remaining_bytes / (smooth_mb * 1024 * 1024))
                             m, s = divmod(eta_secs, 60)
                             h, m = divmod(m, 60)
                             eta_str = f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
@@ -525,8 +542,14 @@ class DownloadWorker(QThread):
             )
 
             self.sig_batch_completed.emit(results)
+        except asyncio.CancelledError:
+            logger.info("Download batch cancelled by user.")
+            self.sig_status.emit("Download cancelled.")
+            self.sig_batch_completed.emit([])
         except Exception as e:
+            logger.error(f"Error during execution: {e}", exc_info=True)
             self.sig_status.emit(f"Error during execution: {e}")
+            self.sig_batch_completed.emit([])
         finally:
             if self.manager:
                 try:

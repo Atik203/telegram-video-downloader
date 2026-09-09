@@ -157,6 +157,8 @@ class DownloaderEngine:
                                 )
                             if temp_path.exists() and temp_path.stat().st_size >= media.size:
                                 downloaded_file = str(temp_path)
+                        except asyncio.CancelledError:
+                            raise
                         except Exception as fast_err:
                             logger.warning(
                                 f"Parallel download interrupted/failed for msg {info.message_id} ({fast_err}); attempting fallback..."
@@ -195,7 +197,7 @@ class DownloaderEngine:
                                 )
                                 caption_path.write_text(content, encoding="utf-8")
                             except Exception as cap_err:
-                                logger.warning(f"Failed to save caption for {target_path.name}: {cap_err}")
+                                logger.warning(f"Could not save caption for msg {info.message_id}: {cap_err}")
 
                         duration = time.time() - start_time
                         file_size = target_path.stat().st_size
@@ -210,6 +212,8 @@ class DownloaderEngine:
                     else:
                         raise RuntimeError("Download finished but target file not found.")
 
+                except asyncio.CancelledError:
+                    raise
                 except FloodWaitError as e:
                     logger.warning(
                         f"Telegram FloodWaitError: waiting {e.seconds}s before retrying msg {info.message_id}..."
@@ -255,7 +259,14 @@ class DownloaderEngine:
 
         tasks = [asyncio.create_task(worker(v)) for v in video_list]
         if tasks:
-            results = await asyncio.gather(*tasks)
+            try:
+                results = await asyncio.gather(*tasks)
+            except asyncio.CancelledError:
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
 
         if self.play_chime:
             try:

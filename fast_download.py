@@ -223,6 +223,7 @@ class ParallelTransferrer:
                         result = await self.client._call(sender, req)
                         chunk = getattr(result, "bytes", b"")
                         if chunk:
+                            should_save = False
                             async with file_lock:
                                 out_file.seek(offset)
                                 out_file.write(chunk)
@@ -231,17 +232,23 @@ class ParallelTransferrer:
                                 current_total = downloaded_bytes
                                 chunks_saved_count += 1
                                 now = time.time()
-                                if chunks_saved_count >= 20 or (now - last_save_time) >= 3.0:
-                                    save_state()
+                                if chunks_saved_count >= 30 or (now - last_save_time) >= 3.0:
                                     last_save_time = now
                                     chunks_saved_count = 0
+                                    should_save = True
 
-                            # Update progress outside write lock
+                            # Save resume state and notify progress outside disk lock
+                            if should_save:
+                                save_state()
+
                             if progress_callback:
                                 res = progress_callback(current_total, file_size)
                                 if asyncio.iscoroutine(res):
                                     await res
                         break
+                    except asyncio.CancelledError:
+                        part_queue.put_nowait(part_idx)
+                        raise
                     except FloodWaitError as e:
                         logger.warning(f"FloodWait in worker: waiting {e.seconds}s...")
                         await asyncio.sleep(e.seconds + 1)
@@ -254,6 +261,12 @@ class ParallelTransferrer:
         try:
             workers = [asyncio.create_task(worker(s)) for s in self.senders]
             await asyncio.gather(*workers)
+        except asyncio.CancelledError:
+            for w in workers:
+                if not w.done():
+                    w.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+            raise
         finally:
             save_state()
             if len(completed_parts) >= part_count:
