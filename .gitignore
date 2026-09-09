@@ -1,0 +1,33 @@
+# Environment variables & secrets (NEVER COMMIT THESE)
+.env
+*.env.local
+
+# Telegram user session files (Contains private auth keys)
+*.session
+*.session-journal
+
+# Downloaded files & temporary parts
+downloads/
+*.part
+*.part.json
+*.part.tmp
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
