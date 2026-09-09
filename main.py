@@ -397,7 +397,7 @@ def main():
             from gui import main as gui_main
             gui_main()
         except Exception as e:
-            logger.warning(f"Could not launch Desktop GUI ({e}). Falling back to Terminal UI...")
+            console.print(f"[yellow]Could not launch Desktop GUI: {e}. Falling back to Terminal UI...[/yellow]")
             try:
                 asyncio.run(interactive_loop())
             except (KeyboardInterrupt, EOFError):
@@ -406,4 +406,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

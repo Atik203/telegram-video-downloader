@@ -26,7 +26,7 @@ from PySide6.QtCore import Qt, QThread, Signal, Slot, QTimer
 from PySide6.QtGui import QFont, QColor, QIcon, QKeySequence, QShortcut
 
 import config
-from link_parser import parse_telegram_link, extract_targets_from_text, LinkTarget
+from link_parser import parse_telegram_link, extract_targets_from_text, ParsedTarget, LinkTarget
 from client_manager import TelegramManager, VideoInfo
 from downloader_engine import DownloaderEngine, DownloadResult, sanitize_filename
 

@@ -31,6 +31,10 @@ class ParsedTarget:
         return f"Channel: {self.channel_ref} | No msgs"
 
 
+# Alias for convenience
+LinkTarget = ParsedTarget
+
+
 def normalize_private_channel_id(raw_id: int | str) -> int:
     """
     Ensures a private channel ID has the standard Telegram supergroup/channel -100 prefix.
