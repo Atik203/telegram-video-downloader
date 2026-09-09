@@ -432,88 +432,107 @@ class DownloadWorker(QThread):
             self.sig_authenticated.emit(name, uname)
         except Exception as e:
             self.sig_auth_failed.emit(str(e))
+            if self.manager:
+                try:
+                    await self.manager.disconnect()
+                except Exception:
+                    pass
             return
 
         if not self.targets:
             self.sig_status.emit("Ready. Enter links to download.")
+            if self.manager:
+                try:
+                    await self.manager.disconnect()
+                except Exception:
+                    pass
             return
 
-        self.sig_status.emit(f"Resolving {len(self.targets)} link target(s)...")
-        video_items: List[VideoInfo] = []
+        try:
+            self.sig_status.emit(f"Resolving {len(self.targets)} link target(s)...")
+            video_items: List[VideoInfo] = []
 
-        for target in self.targets:
-            if self.is_cancelled:
-                break
-            try:
-                items = await self.manager.fetch_videos_from_target(target)
-                video_items.extend(items)
-            except Exception as err:
-                logger.error(f"Failed to fetch videos for target {target}: {err}")
-
-        if self.is_cancelled:
-            self.sig_status.emit("Download cancelled.")
-            return
-
-        if not video_items:
-            self.sig_status.emit("No downloadable videos found in the provided links.")
-            self.sig_batch_completed.emit([])
-            return
-
-        self.sig_batch_started.emit(len(video_items))
-        self.sig_status.emit(f"Starting download of {len(video_items)} video(s)...")
-
-        # Map each item to a row index
-        item_indices = {id(item): idx for idx, item in enumerate(video_items)}
-        last_progress_time: Dict[int, float] = {}
-        last_bytes: Dict[int, int] = {}
-
-        def make_callback(v_info: VideoInfo):
-            row_idx = item_indices[id(v_info)]
-            last_progress_time[row_idx] = time.time()
-            last_bytes[row_idx] = 0
-
-            def cb(downloaded: int, total: int):
+            for target in self.targets:
                 if self.is_cancelled:
-                    raise asyncio.CancelledError("User cancelled download")
+                    break
+                try:
+                    items = await self.manager.fetch_videos_from_target(target)
+                    video_items.extend(items)
+                except Exception as err:
+                    logger.error(f"Failed to fetch videos for target {target}: {err}")
 
-                now = time.time()
-                dt = now - last_progress_time.get(row_idx, now)
-                # Throttle UI signal to 5-10 Hz to keep GUI silky smooth
-                if dt >= 0.15 or downloaded == total:
-                    db = downloaded - last_bytes.get(row_idx, 0)
-                    speed_mb = (db / dt) / (1024 * 1024) if dt > 0 else 0
-                    speed_str = f"{speed_mb:.1f} MB/s" if speed_mb > 0 else "-- MB/s"
+            if self.is_cancelled:
+                self.sig_status.emit("Download cancelled.")
+                return
 
-                    remaining_bytes = total - downloaded
-                    if speed_mb > 0.05 and remaining_bytes > 0:
-                        eta_secs = int(remaining_bytes / (speed_mb * 1024 * 1024))
-                        m, s = divmod(eta_secs, 60)
-                        h, m = divmod(m, 60)
-                        eta_str = f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
-                    else:
-                        eta_str = "--:--"
+            if not video_items:
+                self.sig_status.emit("No downloadable videos found in the provided links.")
+                self.sig_batch_completed.emit([])
+                return
 
-                    last_progress_time[row_idx] = now
-                    last_bytes[row_idx] = downloaded
-                    self.sig_item_progress.emit(row_idx, downloaded, total, speed_str, eta_str)
+            self.sig_batch_started.emit(len(video_items))
+            self.sig_status.emit(f"Starting download of {len(video_items)} video(s)...")
 
-            return cb
+            # Map each item to a row index
+            item_indices = {id(item): idx for idx, item in enumerate(video_items)}
+            last_progress_time: Dict[int, float] = {}
+            last_bytes: Dict[int, int] = {}
 
-        for idx, item in enumerate(video_items):
-            self.sig_item_started.emit(idx, item.filename, item.chat_title, item.file_size)
+            def make_callback(v_info: VideoInfo):
+                row_idx = item_indices[id(v_info)]
+                last_progress_time[row_idx] = time.time()
+                last_bytes[row_idx] = 0
 
-        def on_completed(res: DownloadResult):
-            row_idx = item_indices.get(id(res.info), 0)
-            err = res.error_message or ""
-            self.sig_item_completed.emit(row_idx, res.status, err)
+                def cb(downloaded: int, total: int):
+                    if self.is_cancelled:
+                        raise asyncio.CancelledError("User cancelled download")
 
-        results = await self.engine.download_batch(
-            video_list=video_items,
-            item_callback_factory=make_callback,
-            on_item_completed=on_completed,
-        )
+                    now = time.time()
+                    dt = now - last_progress_time.get(row_idx, now)
+                    # Throttle UI signal to 5-10 Hz to keep GUI silky smooth
+                    if dt >= 0.15 or downloaded == total:
+                        db = downloaded - last_bytes.get(row_idx, 0)
+                        speed_mb = (db / dt) / (1024 * 1024) if dt > 0 else 0
+                        speed_str = f"{speed_mb:.1f} MB/s" if speed_mb > 0 else "-- MB/s"
 
-        self.sig_batch_completed.emit(results)
+                        remaining_bytes = total - downloaded
+                        if speed_mb > 0.05 and remaining_bytes > 0:
+                            eta_secs = int(remaining_bytes / (speed_mb * 1024 * 1024))
+                            m, s = divmod(eta_secs, 60)
+                            h, m = divmod(m, 60)
+                            eta_str = f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+                        else:
+                            eta_str = "--:--"
+
+                        last_progress_time[row_idx] = now
+                        last_bytes[row_idx] = downloaded
+                        self.sig_item_progress.emit(row_idx, downloaded, total, speed_str, eta_str)
+
+                return cb
+
+            for idx, item in enumerate(video_items):
+                self.sig_item_started.emit(idx, item.filename, item.chat_title, item.file_size)
+
+            def on_completed(res: DownloadResult):
+                row_idx = item_indices.get(id(res.info), 0)
+                err = res.error_message or ""
+                self.sig_item_completed.emit(row_idx, res.status, err)
+
+            results = await self.engine.download_batch(
+                video_list=video_items,
+                item_callback_factory=make_callback,
+                on_item_completed=on_completed,
+            )
+
+            self.sig_batch_completed.emit(results)
+        except Exception as e:
+            self.sig_status.emit(f"Error during execution: {e}")
+        finally:
+            if self.manager:
+                try:
+                    await self.manager.disconnect()
+                except Exception:
+                    pass
 
 
 # ==============================================================================
@@ -732,6 +751,10 @@ class MainWindow(QMainWindow):
     # Initial Auth & Setup
     # --------------------------------------------------------------------------
     def _check_initial_auth(self):
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            self.worker.wait(1500)
+
         valid, msg = config.validate_config()
         if not valid:
             self.lbl_account.setText("🔴 Not Configured")
@@ -877,6 +900,10 @@ class MainWindow(QMainWindow):
         self.btn_retry_failed.setVisible(False)
         self.failed_links_cache.clear()
 
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            self.worker.wait(1500)
+
         self.worker = DownloadWorker(targets=targets, engine=engine)
         self.worker.sig_status.connect(self._on_status)
         self.worker.sig_authenticated.connect(self._on_auth_success)
@@ -890,11 +917,18 @@ class MainWindow(QMainWindow):
         self.worker.sig_batch_completed.connect(self._on_batch_completed)
         self.worker.start()
 
+    def closeEvent(self, event):
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            self.worker.wait(1500)
+        event.accept()
+
     def _cancel_download(self):
         if self.worker:
             self.lbl_status.setText("Cancelling downloads...")
             self.worker.cancel()
             self.btn_cancel.setEnabled(False)
+
 
     def _retry_failed(self):
         if not self.failed_links_cache:

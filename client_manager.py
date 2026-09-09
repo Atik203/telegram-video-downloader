@@ -44,6 +44,19 @@ class VideoInfo:
     message_obj: Any = None
 
 
+def configure_sqlite_wal(session_name: str) -> None:
+    """Configures SQLite WAL mode and busy timeout to avoid database locked errors."""
+    db_file = f"{session_name}.session"
+    try:
+        import sqlite3
+        conn = sqlite3.connect(db_file, timeout=10.0)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=15000;")
+        conn.close()
+    except Exception:
+        pass
+
+
 class TelegramManager:
     def __init__(self):
         self.client: Optional[TelegramClient] = None
@@ -59,12 +72,15 @@ class TelegramManager:
         if not valid:
             raise ValueError(msg)
 
+        configure_sqlite_wal(config.SESSION_NAME)
+
         self.client = TelegramClient(
             config.SESSION_NAME,
             config.TG_API_ID,
             config.TG_API_HASH,
         )
         await self.client.connect()
+
 
         if not await self.client.is_user_authorized():
             if not code_callback:
