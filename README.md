@@ -1,4 +1,4 @@
-# ⚡ Telegram Video Downloader Pro
+# ⚡ Telegram Video Downloader
 
 A modern, high-performance Telegram video downloader with a **Desktop Graphical User Interface (GUI)** and an interactive **Terminal User Interface (TUI)** optimized for **Windows 10 & 11**.
 
@@ -25,6 +25,7 @@ Download videos from **public channels**, **private channels / supergroups** (e.
 ## 🚀 Quick Start
 
 ### Option A: Portable Standalone Executable (No Python Required)
+
 1. Run `build_portable.bat` to generate the portable package.
 2. Open `dist\TelegramDownloader-Portable\` and double-click `TelegramDownloader.exe`.
 3. The built-in Setup Wizard will guide you through connecting your account in 30 seconds!
@@ -32,17 +33,20 @@ Download videos from **public channels**, **private channels / supergroups** (e.
 ### Option B: Run via Python
 
 1. **Install Dependencies**:
+
    ```bash
    pip install -r requirements.txt
    ```
 
 2. **Launch Desktop GUI**:
+
    ```bash
    python main.py
    # or double-click run.bat
    ```
 
 3. **Terminal Mode (Optional)**:
+
    ```bash
    # Launch Rich interactive terminal UI
    python main.py --cli
@@ -50,7 +54,6 @@ Download videos from **public channels**, **private channels / supergroups** (e.
    # Or direct headless automation
    python main.py --url https://t.me/c/3100538760/15-20 --concurrency 10
    ```
-
 
 ---
 
