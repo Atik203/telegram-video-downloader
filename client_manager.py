@@ -4,7 +4,7 @@ Telegram Client Lifecycle & Entity Resolution Manager
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, Any
+from typing import Optional, Any, Callable
 from pathlib import Path
 
 from telethon import TelegramClient
@@ -49,8 +49,12 @@ class TelegramManager:
         self.client: Optional[TelegramClient] = None
         self._dialogs_cached = False
 
-    async def initialize(self) -> TelegramClient:
-        """Create and start the TelegramClient instance with clean interactive login prompts."""
+    async def initialize(
+        self,
+        code_callback: Optional[Callable] = None,
+        password_callback: Optional[Callable] = None,
+    ) -> TelegramClient:
+        """Create and start the TelegramClient instance with interactive or GUI login prompts."""
         valid, msg = config.validate_config()
         if not valid:
             raise ValueError(msg)
@@ -63,36 +67,44 @@ class TelegramManager:
         await self.client.connect()
 
         if not await self.client.is_user_authorized():
-            from rich.panel import Panel
-            from rich.console import Console
-            from rich.prompt import Prompt
-            term = Console()
-            term.print(
-                Panel(
-                    f"[bold yellow]Authentication required for account: [white]{config.TG_PHONE}[/white][/bold yellow]\n\n"
-                    "Telegram has sent a verification code to your Telegram app (or via SMS).\n"
-                    "Please check your active Telegram devices for the official code.",
-                    title="🔐 Telegram Authentication",
-                    border_style="yellow",
-                    padding=(1, 2),
+            if not code_callback:
+                from rich.panel import Panel
+                from rich.console import Console
+                from rich.prompt import Prompt
+                term = Console()
+                term.print(
+                    Panel(
+                        f"[bold yellow]Authentication required for account: [white]{config.TG_PHONE}[/white][/bold yellow]\n\n"
+                        "Telegram has sent a verification code to your Telegram app (or via SMS).\n"
+                        "Please check your active Telegram devices for the official code.",
+                        title="🔐 Telegram Authentication",
+                        border_style="yellow",
+                        padding=(1, 2),
+                    )
                 )
-            )
 
-            def get_code():
-                while True:
-                    code = Prompt.ask("[bold cyan]Enter verification code[/bold cyan]").strip()
-                    if code:
-                        return code
+                def get_code():
+                    while True:
+                        code = Prompt.ask("[bold cyan]Enter verification code[/bold cyan]").strip()
+                        if code:
+                            return code
 
-            def get_password():
-                return Prompt.ask("[bold magenta]Enter your 2FA password[/bold magenta]", password=True)
+                def get_password():
+                    return Prompt.ask("[bold magenta]Enter your 2FA password[/bold magenta]", password=True)
+
+                code_cb = get_code
+                password_cb = get_password
+            else:
+                code_cb = code_callback
+                password_cb = password_callback or (lambda: "")
 
             await self.client.start(
                 phone=config.TG_PHONE,
-                code_callback=get_code,
-                password=get_password,
+                code_callback=code_cb,
+                password=password_cb,
             )
-            term.print("[bold green]✓ Successfully authenticated with Telegram![/bold green]\n")
+            if not code_callback:
+                term.print("[bold green]✓ Successfully authenticated with Telegram![/bold green]\n")
 
         return self.client
 

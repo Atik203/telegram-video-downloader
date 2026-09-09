@@ -425,8 +425,10 @@ class DownloadWorker(QThread):
                 password_callback=self._password_callback,
             )
             me = await self.manager.get_me()
-            name = f"{getattr(me, 'first_name', '')} {getattr(me, 'last_name', '') or ''}".strip()
-            uname = getattr(me, "username", "") or ""
+            first = me.get("first_name", "") if isinstance(me, dict) else getattr(me, "first_name", "")
+            last = me.get("last_name", "") if isinstance(me, dict) else getattr(me, "last_name", "")
+            name = f"{first} {last}".strip() or "Telegram User"
+            uname = (me.get("username", "") if isinstance(me, dict) else getattr(me, "username", "")) or ""
             self.sig_authenticated.emit(name, uname)
         except Exception as e:
             self.sig_auth_failed.emit(str(e))
