@@ -204,6 +204,34 @@ class TelegramManager:
         # Filter out None (deleted or inaccessible messages)
         return [m for m in msgs if m is not None]
 
+    async def fetch_videos_from_target(self, target: Any) -> list[VideoInfo]:
+        """
+        Resolves target entity, fetches messages by IDs, and extracts all downloadable VideoInfo.
+        """
+        if not self.client:
+            raise RuntimeError("Client not initialized")
+
+        channel_ref = getattr(target, "channel_ref", target)
+        raw_id = getattr(target, "raw_channel_id", None)
+        message_ids = getattr(target, "message_ids", [])
+        if isinstance(message_ids, int):
+            message_ids = [message_ids]
+
+        entity = await self.resolve_entity(channel_ref, raw_id)
+        chat_title = getattr(entity, "title", str(channel_ref))
+
+        videos: list[VideoInfo] = []
+        chunk_size = 100
+        for i in range(0, len(message_ids), chunk_size):
+            chunk = message_ids[i:i + chunk_size]
+            messages = await self.get_messages(entity, chunk)
+            for msg in messages:
+                vinfo = self.extract_video_info(msg, chat_title)
+                if vinfo:
+                    videos.append(vinfo)
+
+        return videos
+
     async def get_user_channels(self, limit: int = 50) -> list[dict]:
         """List channels and supergroups the user is currently a member of."""
         if not self.client:

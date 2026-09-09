@@ -199,7 +199,14 @@ class TestNewFeatures(unittest.TestCase):
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
+    def test_telegram_manager_has_fetch_videos_from_target(self):
+        from client_manager import TelegramManager
+        manager = TelegramManager()
+        self.assertTrue(hasattr(manager, "fetch_videos_from_target"))
+        self.assertTrue(callable(getattr(manager, "fetch_videos_from_target")))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
