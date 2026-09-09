@@ -86,7 +86,13 @@ def main():
     print("\n[3/4] Organizing Portable distribution folder...")
     compiled_folder = dist_dir / "TelegramDownloader"
     if compiled_folder.exists():
-        compiled_folder.rename(portable_dir)
+        if portable_dir.exists():
+            shutil.rmtree(portable_dir, ignore_errors=True)
+        try:
+            compiled_folder.rename(portable_dir)
+        except Exception:
+            shutil.copytree(compiled_folder, portable_dir, dirs_exist_ok=True)
+            shutil.rmtree(compiled_folder, ignore_errors=True)
 
     # Copy companion files
     if (project_dir / ".env.example").exists():
