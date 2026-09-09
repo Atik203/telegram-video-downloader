@@ -45,17 +45,10 @@ jobs:
         run: |
           python build_portable.py
 
-      - name: Locate Built Artifacts
-        id: artifacts
-        run: |
-          Get-ChildItem -Path dist\
-          $zipPath = (Get-Item dist\TelegramDownloader-*-Portable-x64.zip).FullName
-          echo "ZIP_PATH=$zipPath" >> $env:GITHUB_ENV
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ZIP_PATH }}
+          files: dist/*.zip
           generate_release_notes: true
           draft: false
           prerelease: false

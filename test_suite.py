@@ -100,18 +100,54 @@ class TestUIFormatters(unittest.TestCase):
 
 class TestConfig(unittest.TestCase):
     def test_config_validation(self):
-        valid, msg = config.validate_config()
-        self.assertTrue(valid, f"Config validation failed: {msg}")
+        orig_id = config.TG_API_ID
+        orig_hash = config.TG_API_HASH
+        orig_phone = config.TG_PHONE
+        try:
+            # Positive test: valid mock credentials
+            config.TG_API_ID = 123456
+            config.TG_API_HASH = "mock_hash_0123456789abcdef"
+            config.TG_PHONE = "+1234567890"
+            valid, msg = config.validate_config()
+            self.assertTrue(valid, f"Config validation should succeed with mock values: {msg}")
+
+            # Negative test: missing TG_API_ID
+            config.TG_API_ID = 0
+            valid, msg = config.validate_config()
+            self.assertFalse(valid)
+            self.assertIn("TG_API_ID", msg)
+
+            # Negative test: missing TG_API_HASH
+            config.TG_API_ID = 123456
+            config.TG_API_HASH = ""
+            valid, msg = config.validate_config()
+            self.assertFalse(valid)
+            self.assertIn("TG_API_HASH", msg)
+
+            # Negative test: missing TG_PHONE
+            config.TG_API_HASH = "mock_hash_0123456789abcdef"
+            config.TG_PHONE = ""
+            valid, msg = config.validate_config()
+            self.assertFalse(valid)
+            self.assertIn("TG_PHONE", msg)
+        finally:
+            config.TG_API_ID = orig_id
+            config.TG_API_HASH = orig_hash
+            config.TG_PHONE = orig_phone
 
     def test_download_dir_drive_root(self):
-        p1 = config.parse_download_dir("M:\\")
-        self.assertEqual(str(p1), "M:\\")
-        p2 = config.parse_download_dir("M:")
-        self.assertEqual(str(p2), "M:\\")
-        p3 = config.parse_download_dir('"M:\\"')
-        self.assertEqual(str(p3), "M:\\")
-        p4 = config.parse_download_dir("D:\\Downloads\\Telegram")
-        self.assertEqual(str(p4), "D:\\Downloads\\Telegram")
+        if os.name == "nt":
+            p1 = config.parse_download_dir("M:\\")
+            self.assertEqual(str(p1), "M:\\")
+            p2 = config.parse_download_dir("M:")
+            self.assertEqual(str(p2), "M:\\")
+            p3 = config.parse_download_dir('"M:\\"')
+            self.assertEqual(str(p3), "M:\\")
+            p4 = config.parse_download_dir("D:\\Downloads\\Telegram")
+            self.assertEqual(str(p4), "D:\\Downloads\\Telegram")
+        else:
+            p1 = config.parse_download_dir("/var/downloads")
+            self.assertEqual(str(p1), "/var/downloads")
         p5 = config.parse_download_dir("downloads")
         self.assertEqual(str(p5), "downloads")
 
