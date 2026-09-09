@@ -1,5 +1,4 @@
 # Environment variables & secrets (NEVER COMMIT THESE)
-.env
 *.env.local
 
 # Telegram user session files (Contains private auth keys)
@@ -24,10 +23,11 @@ venv/
 env/
 
 # IDE & Editor files
-.vscode/
 .idea/
 *.swp
 # PyInstaller build artifacts
 build/
 dist/
 *.spec
+config.bat
+node_modules
