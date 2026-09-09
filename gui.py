@@ -22,8 +22,8 @@ from PySide6.QtWidgets import (
     QCheckBox, QSpinBox, QDialog, QFormLayout, QMessageBox,
     QFrame, QSplitter, QInputDialog
 )
-from PySide6.QtCore import Qt, QThread, Signal, Slot, QTimer
-from PySide6.QtGui import QFont, QColor, QIcon, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QThread, Signal, Slot, QTimer, QUrl
+from PySide6.QtGui import QFont, QColor, QIcon, QKeySequence, QShortcut, QDesktopServices
 
 import config
 from link_parser import parse_telegram_link, extract_targets_from_text, ParsedTarget, LinkTarget
@@ -52,14 +52,14 @@ QWidget {
 QFrame.card {
     background-color: #1e2026;
     border: 1px solid #2d313c;
-    border-radius: 8px;
-    padding: 10px;
+    border-radius: 9px;
+    padding: 12px;
 }
 
 QFrame.info-card {
     background-color: #192538;
     border: 1px solid #264366;
-    border-radius: 8px;
+    border-radius: 9px;
     padding: 12px;
 }
 
@@ -82,15 +82,22 @@ QLabel.section-title {
 QLineEdit, QTextEdit {
     background-color: #121316;
     border: 1px solid #333742;
-    border-radius: 6px;
-    padding: 8px;
+    border-radius: 7px;
+    padding: 8px 10px;
     color: #ffffff;
-    selection-background-color: #2b7bc4;
+    selection-background-color: #0088cc;
 }
 
 QLineEdit:focus, QTextEdit:focus {
-    border: 1px solid #3a9aff;
-    background-color: #14161a;
+    border: 1.5px solid #0088cc;
+    background-color: #14161b;
+}
+
+QTextEdit.links-input {
+    font-family: 'Consolas', 'Cascadia Code', 'Segoe UI', monospace;
+    font-size: 13px;
+    line-height: 1.45;
+    padding: 10px;
 }
 
 QPushButton {
@@ -358,6 +365,186 @@ class CredentialsGuideDialog(QDialog):
 
 
 # ==============================================================================
+# Drag-and-Drop Enabled Text Edit
+# ==============================================================================
+class DropLinksEdit(QTextEdit):
+    """
+    Subclassed QTextEdit with Drag-and-Drop support for .txt files and direct URL text.
+    """
+    file_dropped = Signal(str, int)  # (filename, targets_count)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            imported_contents = []
+            files_count = 0
+            for u in urls:
+                fpath = Path(u.toLocalFile())
+                if fpath.exists() and fpath.is_file():
+                    try:
+                        text = fpath.read_text(encoding="utf-8", errors="replace")
+                        imported_contents.append(text)
+                        files_count += 1
+                    except Exception as e:
+                        logger.warning(f"Could not read dropped file {fpath}: {e}")
+            if imported_contents:
+                merged = "\n".join(imported_contents)
+                current = self.toPlainText().strip()
+                new_text = f"{current}\n{merged}".strip() if current else merged
+                self.setPlainText(new_text)
+                targets = extract_targets_from_text(new_text)
+                self.file_dropped.emit(f"{files_count} file(s)", len(targets))
+                event.acceptProposedAction()
+                return
+
+        super().dropEvent(event)
+
+
+# ==============================================================================
+# Telegram Message Range Generator Helper Dialog
+# ==============================================================================
+class RangeHelperDialog(QDialog):
+    """
+    User-friendly modal dialog to generate and append Telegram post ranges
+    (e.g., https://t.me/c/3100538760/15-30) without typing them by hand.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("✨ Telegram Range Generator")
+        self.resize(480, 260)
+        self.setStyleSheet(DARK_STYLE)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+
+        info_lbl = QLabel(
+            "Quickly build a message range for batch downloading from private channels or public posts:"
+        )
+        info_lbl.setWordWrap(True)
+        info_lbl.setStyleSheet("color: #8c93a4; font-size: 12px;")
+        layout.addWidget(info_lbl)
+
+        form = QFormLayout()
+        form.setSpacing(10)
+
+        self.input_channel = QLineEdit()
+        self.input_channel.setPlaceholderText("Paste channel link (e.g. https://t.me/c/3100538760) or ID")
+        form.addRow("Channel / Link:", self.input_channel)
+
+        range_layout = QHBoxLayout()
+        self.spin_start = QSpinBox()
+        self.spin_start.setRange(1, 9999999)
+        self.spin_start.setValue(1)
+
+        self.spin_end = QSpinBox()
+        self.spin_end.setRange(1, 9999999)
+        self.spin_end.setValue(10)
+
+        range_layout.addWidget(QLabel("Start ID:"))
+        range_layout.addWidget(self.spin_start)
+        range_layout.addWidget(QLabel("End ID:"))
+        range_layout.addWidget(self.spin_end)
+        range_layout.addStretch()
+
+        form.addRow("Message Range:", range_layout)
+        layout.addLayout(form)
+
+        # Live Link Preview Card
+        self.lbl_preview = QLabel("Preview: https://t.me/c/.../1-10")
+        self.lbl_preview.setStyleSheet(
+            "background-color: #121316; border: 1px solid #282d38; border-radius: 6px; "
+            "padding: 8px; color: #4db3ff; font-family: monospace; font-size: 11px;"
+        )
+        layout.addWidget(self.lbl_preview)
+
+        self.input_channel.textChanged.connect(self._update_preview)
+        self.spin_start.valueChanged.connect(self._update_preview)
+        self.spin_end.valueChanged.connect(self._update_preview)
+
+        # Action Buttons
+        btn_box = QHBoxLayout()
+        btn_box.addStretch()
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        btn_box.addWidget(btn_cancel)
+
+        btn_add = QPushButton("➕ Add to Links")
+        btn_add.setProperty("class", "primary")
+        btn_add.clicked.connect(self._on_add)
+        btn_box.addWidget(btn_add)
+
+        layout.addLayout(btn_box)
+        self._update_preview()
+
+    def _get_generated_link(self) -> str:
+        raw = self.input_channel.text().strip()
+        start = min(self.spin_start.value(), self.spin_end.value())
+        end = max(self.spin_start.value(), self.spin_end.value())
+
+        if not raw:
+            return ""
+
+        # Check private channel format: t.me/c/(\d+)
+        m_c = re.search(r"t\.me/c/(\d+)", raw)
+        if m_c:
+            cid = m_c.group(1)
+            return f"https://t.me/c/{cid}/{start}-{end}" if start != end else f"https://t.me/c/{cid}/{start}"
+
+        # Check raw channel id digits (e.g. 3100538760 or -1003100538760)
+        clean_digits = raw.lstrip("-100").strip()
+        if clean_digits.isdigit() and len(clean_digits) >= 6:
+            return f"https://t.me/c/{clean_digits}/{start}-{end}" if start != end else f"https://t.me/c/{clean_digits}/{start}"
+
+        # Check public username format: t.me/([a-zA-Z0-9_]+)
+        m_pub = re.search(r"t\.me/([a-zA-Z0-9_]+)", raw)
+        if m_pub:
+            cname = m_pub.group(1)
+            return f"https://t.me/{cname}/{start}-{end}" if start != end else f"https://t.me/{cname}/{start}"
+
+        if raw.startswith("@"):
+            cname = raw[1:]
+            return f"https://t.me/{cname}/{start}-{end}" if start != end else f"https://t.me/{cname}/{start}"
+
+        return f"https://t.me/{raw}/{start}-{end}" if start != end else f"https://t.me/{raw}/{start}"
+
+    def _update_preview(self):
+        link = self._get_generated_link()
+        if link:
+            start = min(self.spin_start.value(), self.spin_end.value())
+            end = max(self.spin_start.value(), self.spin_end.value())
+            count = end - start + 1
+            v_word = "message" if count == 1 else "messages"
+            self.lbl_preview.setText(f"Preview: {link} ({count} {v_word})")
+        else:
+            self.lbl_preview.setText("Preview: Please enter channel link or ID above")
+
+    def _on_add(self):
+        if not self._get_generated_link():
+            QMessageBox.warning(self, "Missing Channel", "Please enter a valid Telegram channel link or ID.")
+            return
+        self.accept()
+
+    def get_link(self) -> str:
+        return self._get_generated_link()
+
+
+# ==============================================================================
 # Background Async Worker (Downloads & Telegram Lifecycle via Qt Signals)
 # ==============================================================================
 class DownloadWorker(QThread):
@@ -565,9 +752,10 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("⚡ Telegram Video Downloader Pro")
-        self.resize(1020, 720)
-        self.setMinimumSize(850, 600)
+        self.resize(1040, 750)
+        self.setMinimumSize(880, 620)
         self.setStyleSheet(DARK_STYLE)
+        self.setAcceptDrops(True)
 
         self.worker: Optional[DownloadWorker] = None
         self.results_cache: List[DownloadResult] = []
@@ -620,16 +808,30 @@ class MainWindow(QMainWindow):
         input_card = QFrame()
         input_card.setProperty("class", "card")
         in_layout = QVBoxLayout(input_card)
-        in_layout.setSpacing(8)
+        in_layout.setSpacing(10)
 
         in_header = QHBoxLayout()
         lbl_in = QLabel("📥 Telegram Links or Ranges")
         lbl_in.setFont(QFont("Segoe UI", 12, QFont.Bold))
         lbl_in.setStyleSheet("color: #4db3ff;")
         in_header.addWidget(lbl_in)
+
+        # Real-time target counter pill badge
+        self.lbl_target_counter = QLabel("⚪ 0 targets detected")
+        self.lbl_target_counter.setStyleSheet(
+            "background-color: #161920; border: 1px solid #2b313e; "
+            "border-radius: 11px; padding: 3px 10px; font-size: 11px; font-weight: bold; color: #8890a0;"
+        )
+        in_header.addWidget(self.lbl_target_counter)
+
         in_header.addStretch()
 
         # Action buttons
+        btn_add_range = QPushButton("✨ Add Range")
+        btn_add_range.setStyleSheet("background-color: #242938; border-color: #3b455e; color: #70b5ff;")
+        btn_add_range.clicked.connect(self._open_range_dialog)
+        in_header.addWidget(btn_add_range)
+
         btn_paste_clip = QPushButton("📋 Auto-Paste Clipboard")
         btn_paste_clip.setStyleSheet("background-color: #1e3552; border-color: #2b5080; color: #66b2ff;")
         btn_paste_clip.clicked.connect(self._paste_clipboard)
@@ -645,16 +847,20 @@ class MainWindow(QMainWindow):
 
         in_layout.addLayout(in_header)
 
-        self.txt_links = QTextEdit()
+        self.txt_links = DropLinksEdit()
+        self.txt_links.setProperty("class", "links-input")
         self.txt_links.setPlaceholderText(
-            "Paste Telegram post links here...\n"
-            "Supported formats:\n"
+            "Paste Telegram post links or drag & drop a .txt file here...\n\n"
+            "Supported link formats:\n"
             "  • Single private link:  https://t.me/c/3100538760/15\n"
-            "  • Range of messages:    https://t.me/c/3100538760/15-30\n"
+            "  • Range of messages:    https://t.me/c/3100538760/15-30  (Click '✨ Add Range' for helper)\n"
             "  • Public channel post:  https://t.me/channel_name/42\n"
             "  • Multiple links separated by newlines, spaces, or commas"
         )
-        self.txt_links.setMaximumHeight(105)
+        self.txt_links.setFixedHeight(165)
+        self.txt_links.setFont(QFont("Consolas", 10))
+        self.txt_links.textChanged.connect(self._update_link_counter)
+        self.txt_links.file_dropped.connect(self._on_file_dropped)
         in_layout.addWidget(self.txt_links)
 
         main_layout.addWidget(input_card)
@@ -675,11 +881,18 @@ class MainWindow(QMainWindow):
 
         self.input_download_dir = QLineEdit()
         self.input_download_dir.setText(str(config.DEFAULT_DOWNLOAD_DIR))
+        self.input_download_dir.setClearButtonEnabled(True)
         dir_row.addWidget(self.input_download_dir)
 
         btn_browse_dest = QPushButton("Browse...")
         btn_browse_dest.clicked.connect(self._browse_dest)
         dir_row.addWidget(btn_browse_dest)
+
+        btn_open_dest = QPushButton("📂 Open Folder")
+        btn_open_dest.setStyleSheet("background-color: #1a2738; border-color: #244163; color: #5dade2;")
+        btn_open_dest.clicked.connect(self._open_download_folder)
+        dir_row.addWidget(btn_open_dest)
+
         pref_layout.addLayout(dir_row)
 
         # Checkboxes & Concurrency Row
@@ -841,8 +1054,77 @@ class MainWindow(QMainWindow):
             self.worker.set_auth_password("")
 
     # --------------------------------------------------------------------------
-    # Clipboard & File Helpers
+    # Drag & Drop Support on MainWindow
     # --------------------------------------------------------------------------
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        if hasattr(self, "txt_links") and self.txt_links:
+            self.txt_links.dropEvent(event)
+        else:
+            super().dropEvent(event)
+
+    # --------------------------------------------------------------------------
+    # Clipboard, File & Range Helpers
+    # --------------------------------------------------------------------------
+    def _open_range_dialog(self):
+        dlg = RangeHelperDialog(self)
+        if dlg.exec() == QDialog.Accepted:
+            generated = dlg.get_link()
+            if generated:
+                current = self.txt_links.toPlainText().strip()
+                new_text = f"{current}\n{generated}".strip() if current else generated
+                self.txt_links.setPlainText(new_text)
+                self.lbl_status.setText(f"Added range: {generated}")
+
+    def _update_link_counter(self):
+        text = self.txt_links.toPlainText().strip()
+        if not text:
+            self.lbl_target_counter.setText("⚪ 0 targets detected")
+            self.lbl_target_counter.setStyleSheet(
+                "background-color: #161920; border: 1px solid #2b313e; "
+                "border-radius: 11px; padding: 3px 10px; font-size: 11px; font-weight: bold; color: #8890a0;"
+            )
+            return
+
+        targets = extract_targets_from_text(text)
+        if not targets:
+            self.lbl_target_counter.setText("⚠️ Invalid format")
+            self.lbl_target_counter.setStyleSheet(
+                "background-color: #332014; border: 1px solid #66381a; "
+                "border-radius: 11px; padding: 3px 10px; font-size: 11px; font-weight: bold; color: #ffaa55;"
+            )
+            return
+
+        total_vids = sum(len(t.message_ids) for t in targets)
+        t_label = "target" if len(targets) == 1 else "targets"
+        v_label = "video" if total_vids == 1 else "videos"
+        self.lbl_target_counter.setText(f"🎯 {len(targets)} {t_label} • {total_vids} {v_label} detected")
+        self.lbl_target_counter.setStyleSheet(
+            "background-color: #0d281e; border: 1px solid #165c3b; "
+            "border-radius: 11px; padding: 3px 10px; font-size: 11px; font-weight: bold; color: #00e676;"
+        )
+
+    def _on_file_dropped(self, files_info: str, targets_count: int):
+        self.lbl_status.setText(f"Loaded {targets_count} target(s) from dropped {files_info}.")
+
+    def _open_download_folder(self):
+        folder_str = self.input_download_dir.text().strip()
+        folder_path = Path(folder_str) if folder_str else config.DEFAULT_DOWNLOAD_DIR
+        folder_path.mkdir(parents=True, exist_ok=True)
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(folder_path))
+            else:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder_path)))
+            self.lbl_status.setText(f"Opened download folder: {folder_path.name}")
+        except Exception as e:
+            QMessageBox.warning(self, "Could Not Open Folder", f"Failed to open download folder: {e}")
+
     def _paste_clipboard(self):
         clipboard = QApplication.clipboard()
         text = clipboard.text().strip()
@@ -875,6 +1157,19 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Import Error", f"Could not read file: {e}")
 
     def _clear_input(self):
+        current_text = self.txt_links.toPlainText().strip()
+        if current_text:
+            targets = extract_targets_from_text(current_text)
+            if len(targets) >= 5:
+                res = QMessageBox.question(
+                    self, "Clear All Links",
+                    f"Are you sure you want to clear {len(targets)} detected targets?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if res != QMessageBox.Yes:
+                    return
+
         self.txt_links.clear()
         self.table.setRowCount(0)
         self.lbl_status.setText("Cleared.")
